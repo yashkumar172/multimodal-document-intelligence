@@ -1,0 +1,12 @@
+streamlit
+pdfplumber
+PyMuPDF
+sentence-transformers
+chromadb
+google-genai
+transformers
+python-dotenv
+
+# Used by the scripts in tests/ to build test PDFs and images
+fpdf2
+Pillow

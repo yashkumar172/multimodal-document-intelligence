@@ -1,0 +1,27 @@
+# Secrets (keep the placeholder template)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Virtual environment
+venv/
+.venv/
+
+# Local vector database (rebuilt by uploading PDFs in the app)
+chroma_db/
+
+# Private conversation transcripts
+transcript.md
+transcript.html
+
+# Editors and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
