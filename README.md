@@ -47,7 +47,7 @@ flowchart TD
 
 **Comparison.** The comparison question is run as two separate searches, each filtered to one document, so both documents contribute evidence even if one is much longer.
 
-A detailed, file-by-file walkthrough is in [`PROJECT_PIPELINE_EXPLAINED.md`](PROJECT_PIPELINE_EXPLAINED.md), and the original project specification is in [`dsaiproject1.md`](dsaiproject1.md).
+The original project specification is in [`SPEC.md`](SPEC.md).
 
 ---
 
