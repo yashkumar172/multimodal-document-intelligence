@@ -2,7 +2,7 @@ streamlit
 pdfplumber
 PyMuPDF
 sentence-transformers
-chromadb
+chromadb==1.5.9
 google-genai
 transformers
 python-dotenv

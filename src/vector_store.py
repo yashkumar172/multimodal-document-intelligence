@@ -1,6 +1,9 @@
+import threading
+
 import chromadb
 
 _CLIENT = None
+_CLIENT_LOCK = threading.Lock()
 _COLLECTION_NAME = "documents"
 _PERSIST_DIR = "chroma_db"
 
@@ -8,7 +11,12 @@ _PERSIST_DIR = "chroma_db"
 def get_collection():
     global _CLIENT
     if _CLIENT is None:
-        _CLIENT = chromadb.PersistentClient(path=_PERSIST_DIR)
+        # Streamlit serves each session on its own thread. ChromaDB's
+        # PersistentClient setup is not thread-safe: concurrent creation can
+        # fail with KeyError: 'chroma_db'. Create the shared client only once.
+        with _CLIENT_LOCK:
+            if _CLIENT is None:
+                _CLIENT = chromadb.PersistentClient(path=_PERSIST_DIR)
     return _CLIENT.get_or_create_collection(_COLLECTION_NAME)
 
 
