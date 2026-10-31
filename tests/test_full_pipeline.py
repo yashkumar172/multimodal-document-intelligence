@@ -33,7 +33,7 @@ def main():
     print(f"  Indexed {n} chunks")
 
     print("Asking a question via the full RAG pipeline (real Gemini call)...")
-    answer, sources = pipeline.answer_question("What dataset was used for training?")
+    answer, sources, _timings = pipeline.answer_question("What dataset was used for training?")
     print("Answer:", answer)
     print("Sources:", sources)
 

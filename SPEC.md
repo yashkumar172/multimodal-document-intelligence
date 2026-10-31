@@ -88,7 +88,7 @@ Extract:
 5. Vector database storage
 
 
-6. Semantic search
+6. Hybrid search (keyword BM25 + semantic) with cross-encoder reranking
 
 
 7. Question answering using RAG
@@ -217,7 +217,13 @@ The system integrates existing vision-language models into an AI pipeline.
 
                   |
 
-        Similarity Retrieval
+  Hybrid Retrieval (BM25 + Dense, RRF)
+
+                  |
+
+                  |
+
+       Cross-Encoder Reranking
 
                   |
 
@@ -406,9 +412,14 @@ Store:
 Required operations:
 
 
-- Similarity search
-- Top-k retrieval (k = 10 chunks per question; 10 per document when comparing)
+- Similarity search (dense, top 30 candidates)
+- Metadata filtering by document (for comparison)
 - Source tracking
+
+
+A BM25 keyword index (rank-bm25, BM25Okapi) is kept in memory alongside ChromaDB.
+It is rebuilt from the chunks stored in ChromaDB whenever documents are added or
+removed, so both indexes always hold the same chunks (no separate file to drift).
 
 
 ---
@@ -425,13 +436,25 @@ User Question
 
        |
 
-Question Embedding
+Question Embedding              BM25 Tokenization
 
-       |
+       |                               |
 
-Vector Similarity Search
+Dense Search (top 30)           BM25 Search (top 30)
 
-       |
+       |                               |
+
+       +---------------+---------------+
+
+                       |
+
+Reciprocal Rank Fusion (k = 60), keep top 25
+
+                       |
+
+Cross-Encoder Reranking, keep top 10
+
+                       |
 
 Relevant Document Chunks
 
@@ -452,6 +475,21 @@ Final Answer
 
 
 The answer should be generated using retrieved document information.
+
+
+Retrieval settings:
+
+
+- Stage 1: BM25 (top 30) and dense MiniLM search (top 30), fused with
+  Reciprocal Rank Fusion: score(d) = sum of 1 / (60 + rank of d in each list);
+  duplicates merged; top 25 kept.
+- Stage 2: cross-encoder reranker (cross-encoder/ms-marco-MiniLM-L-6-v2, local
+  CPU) scores the 25 (question, chunk) pairs; the top 10 go to the LLM
+  (~2,000 tokens of context with 200-token chunks).
+- BM25 tokens keep word-internal hyphens, so codes like "XJ-4471-B" stay whole.
+- Comparison runs both stages separately for each document, filtered to it.
+- Each answer reports the latency of every stage (embedding, BM25, dense, RRF,
+  reranking, LLM).
 
 
 ---
@@ -609,9 +647,16 @@ The system should be evaluated using:
 Metrics:
 
 
-- Recall@K
+- HitRate@K (Recall@K: the correct page is in the top K)
+
+- MRR@K (Mean Reciprocal Rank)
+
+- NDCG@K (Normalized Discounted Cumulative Gain)
 
 - Precision@K
+
+
+for K = 3, 5 and 10, plus p50/p95 retrieval latency.
 
 
 Example:
@@ -650,8 +695,10 @@ Measure:
 No pre-existing labeled dataset is available, so build one manually:
 
 
-- Hand-write ~15-20 question/answer pairs against your own test PDFs, noting the correct source page for each.
-- Score retrieval (Recall@K/Precision@K) by checking whether the correct page appears in the retrieved chunks.
+- 15 question/answer pairs generated from passages of a test PDF, each linked to its source page (wording is close to the source text).
+- 12 hand-paraphrased question/answer pairs on the same PDF, worded differently from the text, for a stricter test.
+- A retrieved chunk is relevant if it comes from the expected page. Score retrieval with the metrics above.
+- Compare four retrieval configurations on the same questions (benchmarks/benchmark_retrieval.py): Dense-only, Sparse-only (BM25), Hybrid (RRF), Two-Stage (Hybrid + reranker).
 - Score faithfulness/hallucination/citation correctness manually (pass/fail per answer) rather than using an automated evaluation framework (e.g. RAGAS) — not worth the added dependency for this scope.
 
 
@@ -743,6 +790,17 @@ Streamlit
 ChromaDB
 
 
+## Keyword Search
+
+rank-bm25 (BM25Okapi), in memory
+
+
+## Reranker
+
+Sentence Transformers cross-encoder: cross-encoder/ms-marco-MiniLM-L-6-v2 (~90 MB,
+runs on CPU; reranking 25 candidates takes about 0.8 s on a Ryzen 5 5500U)
+
+
 ## LLM
 
 Gemini API only (has a genuinely usable free tier; GPT/Claude APIs do not — keep them as a later swap-in only if budget becomes available)
@@ -786,7 +844,7 @@ Build basic RAG:
 Improve AI system:
 
 
-- Better retrieval
+- Better retrieval (two-stage hybrid search: BM25 + dense with RRF, then cross-encoder reranking)
 - Citations (clean source/page-number display in the Streamlit UI — this is a differentiator, worth real polish here)
 - Evaluation pipeline
 

@@ -10,6 +10,21 @@ load_dotenv()
 from src import pipeline, vector_store
 
 st.set_page_config(page_title="Document Intelligence Assistant", layout="wide")
+
+
+def show_latency(timings):
+    """One line per retrieval/generation stage for this query, in milliseconds."""
+    labels = [
+        ("embed_ms", "Query embedding"),
+        ("bm25_ms", "BM25 search"),
+        ("dense_ms", "Dense search"),
+        ("rrf_ms", "RRF merge"),
+        ("rerank_ms", "Cross-encoder rerank"),
+        ("llm_ms", "Gemini generation"),
+    ]
+    rows = [f"{label}: {timings[key]:.0f} ms" for key, label in labels if key in timings]
+    st.caption("Latency for this query — " + " · ".join(rows) + f" · Total: {sum(timings.values()):.0f} ms")
+
 st.title("Multimodal Document Intelligence Assistant")
 
 if "chat_history" not in st.session_state:
@@ -69,7 +84,7 @@ if len(available_docs) >= 2:
         )
         if st.button("Compare"):
             with st.spinner(f"Comparing {doc_a} vs {doc_b}..."):
-                comparison_answer, comparison_sources = pipeline.compare_documents(
+                comparison_answer, comparison_sources, comparison_timings = pipeline.compare_documents(
                     doc_a, doc_b, question=comparison_question or None
                 )
             st.markdown(comparison_answer)
@@ -81,6 +96,7 @@ if len(available_docs) >= 2:
                     for s in unique:
                         label = "figure/table" if s["type"] == "visual" else "text"
                         st.write(f"- {s['document']} (page {s['page']}, {label})")
+                    show_latency(comparison_timings)
 
 st.subheader("Ask a question")
 
@@ -97,12 +113,13 @@ if question:
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
-                answer, sources = pipeline.answer_question(
+                answer, sources, timings = pipeline.answer_question(
                     question, history=st.session_state.chat_history[:-1]
                 )
             except Exception as e:
                 answer = f"Error: {e}"
                 sources = []
+                timings = {}
             st.markdown(answer)
             if sources:
                 unique_sources = list({(s["document"], s["page"], s["type"]): s for s in sources}.values())
@@ -110,4 +127,5 @@ if question:
                     for s in unique_sources:
                         label = "figure/table" if s["type"] == "visual" else "text"
                         st.write(f"- {s['document']} (page {s['page']}, {label})")
+                    show_latency(timings)
     st.session_state.chat_history.append(("assistant", answer))
