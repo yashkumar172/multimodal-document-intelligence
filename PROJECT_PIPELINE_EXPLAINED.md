@@ -29,7 +29,7 @@ A technical deep dive into **exactly what the code does**, file by file and step
 
 ## 1. One-Paragraph Summary
 
-The user uploads one or more PDF files in a Streamlit web app. The system pulls the **text** out of every page (pdfplumber) and, for pages that probably contain **figures, charts, or tables**, it renders the whole page as an image (PyMuPDF) and asks **Gemini Vision** to describe it in words. Both the page text and the figure descriptions are split into 200-token **chunks** (sized to fit the embedding model's 256-token input limit), turned into 384-number **embedding vectors** with the `all-MiniLM-L6-v2` Sentence Transformer, and stored in a **ChromaDB** vector database together with the document name and page number. When the user asks a question, **two-stage hybrid retrieval** finds the context: **BM25 keyword search** and **dense (embedding) search** each return 30 candidates, **Reciprocal Rank Fusion** merges them into the best 25, and a **cross-encoder reranker** picks the **10 most relevant chunks**. Those chunks are pasted into a prompt for **Gemini** (`gemini-flash-lite-latest`), which writes an answer **using only that context** and **cites page numbers**. The app shows how long each stage took, can **compare two documents** side by side, and comes with an **evaluation script** and a **retrieval benchmark** (HitRate@K, MRR@K, NDCG@K, latency).
+The user uploads one or more PDF files in a Streamlit web app. The system pulls the **text** out of every page (pdfplumber) and, for pages that probably contain **figures, charts, or tables**, it renders the whole page as an image (PyMuPDF) and asks **Gemini Vision** to describe it in words. Both the page text and the figure descriptions are split into 200-token **chunks** (sized to fit the embedding model's 256-token input limit), turned into 384-number **embedding vectors** with the `all-MiniLM-L6-v2` Sentence Transformer, and stored in a **ChromaDB** vector database together with the document name and page number. When the user asks a question, **two-stage hybrid retrieval** finds the context: **BM25 keyword search** and **dense (embedding) search** each return 30 candidates, **Reciprocal Rank Fusion** merges them into the best 25, and a **cross-encoder reranker** picks the **10 most relevant chunks**. Those chunks are pasted into a prompt for **Gemini** (`gemini-flash-lite-latest`), which writes an answer **using only that context** and **cites page numbers**. The app shows how long each stage took, can **compare two documents** side by side, and comes with an **evaluation script** and a **retrieval benchmark** (HitRate@K, MRR@K, NDCG@K, latency), which is also run on the public **BEIR SciFact** dataset with bootstrap confidence intervals. A **fine-tuning notebook** adapts the embedding model to SciFact and measures whether the gain transfers to the lecture PDFs.
 
 ---
 
@@ -83,8 +83,17 @@ AIML Project DSAI/
 │   └── eval_report.md        ← Output report (Recall@K, MRR@K, Precision@K, per-question table)
 │
 ├── benchmarks/
-│   ├── benchmark_retrieval.py ← Ablation: dense vs BM25 vs hybrid vs two-stage (no Gemini)
-│   └── benchmark_results.md  ← Latest benchmark tables
+│   ├── benchmark_retrieval.py ← Ablation: dense vs BM25 vs hybrid vs two-stage (no Gemini); --model for other embedders
+│   ├── benchmark_results.md  ← Latest benchmark tables (base model)
+│   ├── benchmark_results_fine-tuned.md ← Same, with the fine-tuned embedder
+│   ├── benchmark_scifact.py  ← The same four setups on BEIR SciFact, with bootstrap CIs
+│   ├── scifact_results.md    ← SciFact tables (base and fine-tuned)
+│   └── beir_cache/           ← Downloaded dataset + its ChromaDB index (gitignored)
+│
+├── finetune/
+│   ├── finetune_minilm_scifact.ipynb ← Colab notebook: fine-tune MiniLM on SciFact train
+│   ├── requirements.txt      ← Training-only extras (datasets, accelerate)
+│   └── README.md             ← How to run it and use the model
 │
 └── tests/                    ← Manual test scripts for each phase
     ├── test_gemini_key.py, list_gemini_models.py
@@ -541,11 +550,69 @@ Results (all 27 questions; latency is retrieval only, on a Ryzen 5 5500U CPU):
 What the benchmark shows:
 
 - **All configurations find the right page in the top 10 about equally often** (0.93–0.96). The difference is **where** it ranks.
-- **Hybrid beats either search alone** (MRR 0.847 vs 0.677 dense and 0.781 BM25): the two searches fail on different questions, and RRF combines their strengths.
+- **On these PDFs, hybrid beats either search alone** (MRR 0.847 vs 0.677 dense and 0.781 BM25): the two searches fail on different questions, and RRF combines their strengths. This did **not** hold on the public SciFact benchmark (D4), so it is a property of this data, not a general rule.
 - **The reranker moves the right page to the top:** HitRate@3 rises from 0.778 (dense) to 0.963, and MRR from 0.677 to 0.907. In 26 of 27 questions the correct page is in the top 3.
 - **The cost is latency:** about 0.8 s per question for reranking 25 candidates on CPU, compared with ~20 ms for hybrid. Gemini's answer itself takes a few seconds, so the total wait grows by roughly a quarter.
 - Reranking fewer candidates was also measured: 15 candidates gave p50 453 ms with NDCG@10 0.540; 10 candidates gave 342 ms but then the reranker only reorders the same 10 chunks Gemini would get anyway. 25 was kept for the best ranking quality.
 - On the **generated** questions, BM25 alone scores a high MRR (0.84) because their wording copies the text; on the **paraphrased** questions BM25's MRR drops to 0.70 and NDCG to 0.37, while two-stage stays at 0.88 MRR. That is exactly why both sets are reported.
+
+### D4 — Public benchmark: BEIR SciFact (`benchmarks/benchmark_scifact.py`)
+
+27 questions on my own PDFs is a small, self-chosen test, so the same four setups were also run on **BEIR SciFact**: 300 scientific claims (test split) matched against 5,183 paper abstracts, with expert relevance labels. nDCG@10 is the standard BEIR metric. No Gemini calls.
+
+**Setup, reusing the app's code:** the same chunker (200 tokens, 40 overlap), BM25 tokenizer and `BM25Index`, `rrf_merge` with the app's constants (k = 60, 30 per search, keep 25) and `reranker.rerank`. 87% of abstracts are longer than 200 MiniLM tokens (median 315), so documents are chunked like PDFs (12,198 chunks) and **each document is ranked by its best chunk**. Embedding whole abstracts instead would silently truncate 72% of them at MiniLM's 256-token limit. The reranker scores the same 25 fused chunks as in the app; the reranked chunks are collapsed to the top 10 documents. The data and its ChromaDB index live in `benchmarks/beir_cache/`, never in the app's `chroma_db/`.
+
+**Statistics:** 95% confidence intervals from 1,000 bootstrap resamples over queries (seed 42). Differences between setups use a **paired** bootstrap: both setups are scored on the same resampled queries, which is much tighter than comparing two separate intervals.
+
+| Configuration | nDCG@10 [95% CI] | Recall@10 | MRR@10 [95% CI] | p50 ms | p95 ms |
+|---|---|---|---|---|---|
+| Dense-only | 0.665 [0.620, 0.712] | 0.814 | 0.623 [0.576, 0.674] | 18 | 22 |
+| Sparse-only (BM25) | 0.599 [0.554, 0.645] | 0.736 | 0.559 [0.512, 0.607] | 57 | 107 |
+| Hybrid (BM25 + Dense, RRF) | 0.671 [0.628, 0.716] | 0.816 | 0.632 [0.587, 0.678] | 74 | 127 |
+| **Two-Stage (Hybrid + Reranker)** | **0.710** [0.670, 0.752] | **0.844** | **0.677** [0.633, 0.723] | 826 | 957 |
+
+Paired Δ nDCG@10 vs dense-only: BM25 −0.066 [−0.108, −0.027], hybrid +0.006 [−0.022, +0.031], two-stage **+0.044 [+0.012, +0.074]**.
+
+- **The reranker is the only component with a significant gain.** That supports the main design choice on data I didn't pick.
+- **Hybrid does not help on SciFact.** BM25 is clearly weaker than dense search here: the claims paraphrase the abstracts, and the tokenizer has no stemming or stop-word removal, so "inhibits" doesn't match "inhibition". RRF weights both lists equally, so a weak list adds roughly as much noise as new relevant documents. Weighted fusion or stemming might help, but must be tuned on the train split, never on the test set.
+- **Sanity check:** dense MiniLM at 0.665 is close to the ~0.645 reported on the MTEB leaderboard (slightly higher, probably because chunking keeps the ends of long abstracts). BM25 is below BEIR's Elasticsearch baseline (~0.665), which uses stemming.
+- BM25 is slower here (57 ms vs 1 ms) because it scores 12,198 chunks instead of 405.
+
+### D5 — Fine-tuning the embedding model (`finetune/finetune_minilm_scifact.ipynb`)
+
+Question: does adapting MiniLM to the domain beat the general model, and does the gain transfer to the lecture PDFs?
+
+**Training (Colab T4):**
+1. Pairs (claim, relevant abstract) from SciFact's **train** qrels only.
+2. **Leakage check.** No query IDs overlap between train and test, but two train claims are word-for-word copies of test claims with the same relevant abstract (train 871 = test 870, train 1291 = test 1292). They are dropped, then the notebook asserts that no test query remains, by ID or by normalised text.
+3. 10% of train claims (81) are held out as a **dev set** for choosing the epoch count; 726 claims (826 pairs) remain for training.
+4. **Hard negatives:** for each pair, the 2 top-ranked BM25 abstracts that are not labelled relevant. They are harder than random negatives, so the model learns finer distinctions. Only 2 per pair, because SciFact labels are sparse and a "negative" can be an unlabelled relevant abstract.
+5. **`MultipleNegativesRankingLoss`:** for each claim, its positive must score higher than the hard negatives and every other abstract in the batch (in-batch negatives). Batch 32, learning rate 2e-5, 10% warmup, up to 3 epochs, seed 42. A no-duplicates batch sampler stops two copies of one abstract landing in a batch, where one would act as a false negative.
+6. Dev nDCG@10 after each epoch: base 0.694 → 0.708 → 0.739 → **0.751**; the best (epoch 3) is kept.
+
+**SciFact test set:**
+
+| Configuration | nDCG@10 base → fine-tuned | Paired Δ nDCG@10 [95% CI] | p50 ms |
+|---|---|---|---|
+| Dense-only | 0.665 → **0.721** | **+0.055** [+0.035, +0.077] | 15 |
+| Hybrid | 0.671 → 0.719 | +0.048 [+0.030, +0.068] | 74 |
+| Two-Stage | 0.710 → 0.719 | +0.009 [+0.002, +0.019] | 734 |
+
+- **Fine-tuning works in-domain:** +0.055 nDCG@10 for dense search, well outside noise.
+- **Fine-tuned dense search alone matches the base two-stage pipeline** (0.721 vs 0.710; paired Δ +0.011 [−0.015, +0.040], not significant) at ~50× lower latency (15 ms vs 826 ms). For a single-domain product, a fine-tuned embedder could replace the reranker.
+- **The reranker stops adding value** after fine-tuning (two-stage 0.719 vs dense 0.721). It was trained on general web search (MS MARCO) and is now the weaker ranker; fine-tuning it on SciFact is the obvious next experiment.
+
+**Lecture PDFs (27 questions), base → fine-tuned:**
+
+| Configuration | HitRate@3 | HitRate@10 | MRR@10 | NDCG@10 |
+|---|---|---|---|---|
+| Dense-only | 0.778 → 0.852 | 0.963 → 0.926 | 0.677 → 0.691 | 0.448 → 0.452 |
+| Hybrid | 0.889 → 0.889 | 0.963 → 0.926 | 0.847 → 0.843 | 0.498 → 0.485 |
+| Two-Stage (the app) | 0.963 → 0.963 | 0.963 → 0.963 | 0.907 → 0.907 | 0.554 → 0.558 |
+
+**The gain does not transfer:** dense search gains 2 questions in the top 3 but loses 1 from the top 10, and the app's pipeline is unchanged. With 27 questions, 1–2 questions is noise. Biomedical claims are a different domain from AI/statistics lecture notes, so **the app keeps the base model**.
+
+**Caveats:** one run with one seed; the best epoch was the last one tried, so more epochs (chosen on dev) might help; the dev evaluation embeds the first 256 tokens of each abstract while the benchmark uses chunks, so dev and test numbers aren't directly comparable. Training on a laptop CPU at batch 32 ran out of memory (about 128 sequences of 256 tokens per batch), which is why it runs on Colab.
 
 ### The 15 generated test questions
 
@@ -647,7 +714,7 @@ Without the vision step, this answer might be impossible if the table's numbers 
 | **Heuristic visual-page detection (images + caption keywords)** | Avoids sending *every* page to the vision API (slow + quota limits). Cheap and works well for academic PDFs that caption their figures. |
 | **Cap of 15 visual pages** | Protects free-tier API quota and keeps ingestion time bounded. |
 | **200-token chunks, 40 overlap, counted with MiniLM's tokenizer** | Fits completely inside MiniLM's 256-token input, so no text is lost from embeddings; small chunks are focused, which helps precision. Overlap avoids cutting ideas at boundaries. |
-| **Hybrid search (BM25 + dense)** | Dense search understands paraphrases; BM25 catches exact codes, numbers and rare names that embeddings blur. They fail on different questions, so combining them is more robust than either alone. |
+| **Hybrid search (BM25 + dense)** | Dense search understands paraphrases; BM25 catches exact codes, numbers and rare names that embeddings blur. On the lecture PDFs they fail on different questions, and fusion beats either alone (MRR 0.847 vs 0.677/0.781). On SciFact, where BM25 is much weaker, hybrid gave no significant gain; the reranker did. |
 | **Reciprocal Rank Fusion, k = 60** | Merges two result lists using only ranks, so BM25 scores and vector distances (different scales) never have to be normalised. k = 60 is the standard value and stops one first place from dominating. |
 | **30 candidates per search, 25 after fusion** | Enough recall headroom for the reranker to rescue a relevant chunk ranked low by one search, while keeping reranking to one batch. |
 | **Cross-encoder reranker (`ms-marco-MiniLM-L-6-v2`)** | Reads question and passage together, so ranking is more accurate. Small enough for CPU (~0.8 s for 25 candidates). A larger reranker such as `bge-reranker-base` (~1.1 GB) would be several times slower on this laptop. |
@@ -663,6 +730,8 @@ Without the vision step, this answer might be impossible if the table's numbers 
 | **Lazy singletons** for models, Gemini client, Chroma client | Expensive objects are created once and reused across Streamlit re-runs within the process. The ChromaDB client and the reranker are created behind one shared lock, because Streamlit sessions run on separate threads. |
 | **Retry with backoff on server errors** | Free-tier Gemini sometimes returns "overloaded" errors; retrying makes the app robust. |
 | **API key in `.env`, `.env` in `.gitignore`** | Security: keys never committed to source control. |
+| **Benchmark with the app's own code** | The SciFact benchmark imports the app's chunker, BM25 index, RRF and reranker instead of reimplementing them, so its numbers describe this pipeline, not a lookalike. |
+| **Keep the base embedder in the app** | The SciFact-fine-tuned model gained +0.055 nDCG@10 in-domain but nothing on the lecture PDFs, so switching would add re-indexing cost for no measured benefit. |
 | **Modular `src/` + orchestrator** | Each module is testable independently (spec §19). Swapping a component (e.g. a different embedding model or vector DB) changes only one file. |
 
 ---
@@ -682,10 +751,12 @@ What the current design does not handle, and what would fix it.
 9. **Reranking latency** — reranking 25 candidates on a laptop CPU takes about 0.8 s per question (about 1.6 s in comparison mode, which retrieves twice). A GPU, a smaller candidate set or a distilled/quantised reranker would cut this.
     The **first** question after the app starts is slower still (about 10 s in testing), because MiniLM and the cross-encoder are loaded on first use.
 10. **BM25 rebuild cost** — the keyword index is rebuilt from all chunks after every upload or deletion. That is fast for a few thousand chunks, but a large collection would need an incremental index.
-11. **Evaluation** covers one document; 15 questions are LLM-generated from chunks (optimistic) and only 12 are paraphrased; faithfulness is judged manually.
-12. **flash-lite** gives less detailed figure descriptions than larger models.
+11. **Evaluation** on my own PDFs covers one document; 15 questions are LLM-generated from chunks (optimistic) and only 12 are paraphrased; faithfulness is judged manually. The SciFact benchmark adds a public, expert-labelled test, but in one domain (biomedical claims).
+12. **Hybrid fusion is unweighted.** RRF weights BM25 and dense equally, which hurt on SciFact where BM25 is weak; the BM25 tokenizer has no stemming.
+13. **The fine-tuned embedder is domain-specific.** It helps on SciFact and not on the lecture PDFs; one seed, three epochs.
+14. **flash-lite** gives less detailed figure descriptions than larger models.
 
-**Future work:** small-to-big retrieval; query rewriting for follow-ups; OCR for scanned PDFs; figure cropping with a layout model; the §15 experiments (MiniLM vs BGE-small vs E5-small, 200 vs 800 token chunks) using the existing evaluation scripts.
+**Future work:** fine-tune the cross-encoder on SciFact (it is now the weaker ranker); weighted RRF or a stemmed BM25, tuned on train data; small-to-big retrieval; query rewriting for follow-ups; OCR for scanned PDFs; figure cropping with a layout model; the §15 experiments (MiniLM vs BGE-small vs E5-small, 200 vs 800 token chunks) using the existing evaluation scripts.
 
 ---
 
@@ -723,11 +794,20 @@ python benchmarks/benchmark_retrieval.py      # retrieval ablation, no API calls
 python tests/test_hybrid_retrieval.py         # no database or API needed
 ```
 
+Public benchmark and fine-tuning (no API calls):
+
+```bash
+python benchmarks/benchmark_scifact.py        # downloads SciFact on first run; ~5 min to embed, ~6 min to run
+# after running finetune/finetune_minilm_scifact.ipynb on Colab and unzipping into finetune/models/:
+python benchmarks/benchmark_scifact.py --model finetune/models/minilm-scifact --label fine-tuned
+python benchmarks/benchmark_retrieval.py --model finetune/models/minilm-scifact --label fine-tuned
+```
+
 ---
 
 ## 15. Technical Interview Questions
 
-Q1–Q26 cover how the system works and the results. Q27–Q32 are system-design and production questions; answers that describe work not done yet say so.
+Q1–Q26 cover how the system works and the results. Q27–Q32 are system-design and production questions; answers that describe work not done yet say so. Q33–Q36 cover the public benchmark and fine-tuning.
 
 **Q1. What is RAG and why did you use it?**
 Retrieval-Augmented Generation: first *retrieve* relevant pieces of your own documents, then give them to an LLM to *generate* the answer. The LLM doesn't need to have been trained on your PDF. It reduces hallucination, gives citations, and new documents work instantly without retraining.
@@ -760,7 +840,7 @@ Every chunk carries `document_name` and `page_number` metadata. Chunks are label
 The full two-stage retrieval runs twice, once per document, with every stage filtered to that document (ChromaDB's `where` filter for dense search, a document check for BM25), giving 10 chunks per document. A structured prompt asks the LLM for Doc A points, Doc B points, and Main Differences, each with citations.
 
 **Q11. How did you evaluate the system?**
-27 questions with known correct pages: 15 generated from the chapter's text and 12 hand-paraphrased. Through the full pipeline, Recall@10 = 96% (26 of 27) and MRR@10 = 0.91; on the paraphrased set alone, 92% and 0.88. A separate benchmark compares dense-only, BM25-only, hybrid and two-stage retrieval with HitRate, MRR and NDCG at K = 3, 5, 10 and p50/p95 latency. Faithfulness is checked manually.
+27 questions with known correct pages: 15 generated from the chapter's text and 12 hand-paraphrased. Through the full pipeline, Recall@10 = 96% (26 of 27) and MRR@10 = 0.91; on the paraphrased set alone, 92% and 0.88. A separate benchmark compares dense-only, BM25-only, hybrid and two-stage retrieval with HitRate, MRR and NDCG at K = 3, 5, 10 and p50/p95 latency. Because 27 self-written questions is a small test, the same four setups also run on the public BEIR SciFact benchmark (300 queries) with bootstrap confidence intervals: two-stage scores nDCG@10 0.710 vs 0.665 for dense alone. Faithfulness is checked manually.
 
 **Q12. Why is precision so low if recall is so high?**
 Precision divides by K (10), but only one page is the "correct" one, so even with perfect retrieval it stays low (typically 10–30%). The other retrieved chunks are usually neighbouring/related pages and still useful context. That's why MRR and NDCG, which measure ranking, are reported too.
@@ -778,10 +858,10 @@ pdfplumber gives clean page text; PyMuPDF is fast at rendering pages to images a
 Stored in `.env`, loaded with python-dotenv, `.env` is in `.gitignore`; `.env.example` shows the format without the real key.
 
 **Q17. What would you improve next?**
-Small-to-big retrieval (search small chunks, give the LLM larger surrounding text), query rewriting for follow-ups, a faster reranker (GPU or a distilled model) to cut the 0.8 s, OCR for scanned PDFs, a larger multi-document paraphrased test set, and the embedding comparison (MiniLM vs BGE-small vs E5-small) using the benchmark script.
+Small-to-big retrieval (search small chunks, give the LLM larger surrounding text), query rewriting for follow-ups, a faster reranker (GPU or a distilled model) to cut the 0.8 s, fine-tuning the cross-encoder on in-domain data, weighted RRF or a stemmed BM25 tuned on train data, OCR for scanned PDFs, a larger multi-document paraphrased test set, and the embedding comparison (MiniLM vs BGE-small vs E5-small) using the benchmark script.
 
 **Q18. What's the difference between keyword search and semantic search, and why use both?**
-Keyword search (BM25) matches exact words: great for codes, numbers and names, but it fails on synonyms and paraphrases. Semantic search compares meaning vectors, so "What dataset was used?" can match "The model was trained on WMT 2014", but it can blur exact codes. Using both and fusing with RRF covers each one's blind spot; in the benchmark, hybrid's MRR@10 (0.847) beats dense (0.677) and BM25 (0.781).
+Keyword search (BM25) matches exact words: great for codes, numbers and names, but it fails on synonyms and paraphrases. Semantic search compares meaning vectors, so "What dataset was used?" can match "The model was trained on WMT 2014", but it can blur exact codes. Using both and fusing with RRF covers each one's blind spot when both are reasonably strong: on my lecture PDFs hybrid's MRR@10 (0.847) beats dense (0.677) and BM25 (0.781). On SciFact it didn't help (+0.006 nDCG@10, not significant), because BM25 was much weaker there (no stemming, paraphrased claims) and RRF weights both lists equally. So I'd say hybrid is a cheap, often-helpful default, but whether it helps has to be measured per dataset.
 
 **Q19. Why does the same embedding model have to be used for chunks and queries?**
 Different models produce vectors in different spaces (even different sizes); distances between them are meaningless.
@@ -825,6 +905,18 @@ Retrieval runs locally (MiniLM, BM25, cross-encoder on CPU), so the only paid ca
 **Q32. What if an uploaded PDF contains instructions aimed at the LLM (prompt injection)?**
 Partly handled: the prompt tells Gemini to answer only from the context, and sources are shown from metadata, so a user can see where an answer came from. Not handled: a chunk saying "ignore previous instructions" is pasted into the prompt as-is. Mitigations would be clearly delimiting retrieved text as untrusted data in the prompt, filtering instruction-like text at ingestion, and never giving the LLM tools or actions that a document could trigger.
 
+**Q33. Why benchmark on SciFact if you already had your own evaluation?**
+27 questions I wrote myself is small and possibly biased toward my system. SciFact is public, expert-labelled and used in published work, so the numbers can be compared and reproduced. It also changed a conclusion: hybrid search helped on my PDFs but not on SciFact, so the README now says that instead of claiming hybrid always wins.
+
+**Q34. Why bootstrap confidence intervals, and why paired?**
+A mean over 300 queries still has sampling noise; resampling the queries 1,000 times shows how much the score would move with a different query sample. Comparing two setups, I resample the *same* queries for both and look at the difference, because the per-query scores are strongly correlated. Two separate intervals can overlap even when one setup is consistently better (e.g. two-stage vs dense: the intervals overlap, but the paired difference +0.044 [+0.012, +0.074] excludes zero).
+
+**Q35. How did you fine-tune the embedding model, and how did you avoid leakage?**
+`MultipleNegativesRankingLoss` on (claim, relevant abstract) pairs from the train split, with 2 BM25 hard negatives per pair and in-batch negatives, choosing the epoch on a 10% dev split of train claims. The test split was never used for training or selection. A leakage check found two train claims identical to test claims (with the same answer) in the official split; I drop them and assert nothing overlaps by ID or text.
+
+**Q36. Fine-tuning gave +0.055 on SciFact but nothing on your PDFs. What do you conclude?**
+Fine-tuning adapts the model to a domain; it doesn't make it better in general. SciFact's biomedical claims differ from AI lecture notes, and on the PDFs the app's two-stage pipeline was already near its ceiling (26 of 27 in the top 3). So I kept the base model. The more useful finding is the other one: on SciFact, fine-tuned dense search alone matched the whole reranking pipeline at ~50× lower latency, so for a single-domain product, fine-tuning the embedder can replace the reranker.
+
 ---
 
 ## 16. Glossary
@@ -856,3 +948,10 @@ Partly handled: the prompt tells Gemini to answer only from the context, and sou
 | **Precision@K** | Fraction of the top K chunks that are relevant. |
 | **Faithfulness** | Whether the answer is supported by the retrieved context. |
 | **Session state** | Streamlit's way of keeping variables between script re-runs. |
+| **BEIR / SciFact** | BEIR is a standard suite of retrieval benchmarks; SciFact is one of its datasets (scientific claims vs paper abstracts, expert labels). |
+| **Bootstrap CI** | A confidence interval from resampling the queries with replacement many times and taking the 2.5th–97.5th percentile of the mean. |
+| **Paired bootstrap** | Resampling the same queries for two systems and measuring the difference, which accounts for per-query correlation. |
+| **Fine-tuning** | Continuing to train a pre-trained model on task-specific data. |
+| **Hard negative** | A non-relevant document that looks relevant (here: ranked high by BM25), used to make training harder and more informative. |
+| **MultipleNegativesRankingLoss** | Contrastive loss: each query's positive must score higher than its hard negatives and all other positives in the batch. |
+| **Data leakage** | Test information reaching training or model selection, which inflates results. |
