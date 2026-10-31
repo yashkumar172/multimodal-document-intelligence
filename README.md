@@ -35,6 +35,8 @@ Reproduce with `python benchmarks/benchmark_retrieval.py` (no API calls) and `py
 - **Exact chunking:** chunks are 200 tokens counted with the embedding model's own tokenizer, so nothing is silently truncated at MiniLM's 256-token limit, and chunks never cross pages, so every citation points to exactly one page.
 - **Honest evaluation:** generated questions reuse the source's wording and flatter keyword search, so a hand-paraphrased set is reported separately. Every answer in the app shows a per-stage latency breakdown.
 
+For the full technical walkthrough (every pipeline step, design trade-offs, limitations and system-design Q&A), see [PROJECT_PIPELINE_EXPLAINED.md](PROJECT_PIPELINE_EXPLAINED.md).
+
 ---
 
 ## Features
@@ -136,6 +138,7 @@ The original project specification is in [`SPEC.md`](SPEC.md).
 │   ├── benchmark_retrieval.py     # Dense vs BM25 vs hybrid vs two-stage ablation
 │   └── benchmark_results.md       # Latest benchmark tables
 ├── tests/                  # Manual test scripts for each component
+├── PROJECT_PIPELINE_EXPLAINED.md  # Technical deep dive
 ├── requirements.txt
 └── .env.example            # Template for the API key
 ```
