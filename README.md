@@ -53,6 +53,49 @@ The dataset and its index are cached in `benchmarks/beir_cache/` (gitignored), s
 
 **Limitations.** SciFact is one domain (biomedical claims) with about 1.1 relevant documents per query, so it says little about other document types. The ~0.645 MTEB figure is quoted for context only; it uses whole-document embeddings, not chunks, so it isn't an exact comparison.
 
+## Fine-tuning
+
+`all-MiniLM-L6-v2` was fine-tuned on SciFact's **train** split to see whether a domain-adapted embedding model beats the general one, and whether that gain carries over to the lecture PDFs.
+
+**Setup** ([`finetune/`](finetune/)): 726 train claims with their relevant abstracts (826 pairs), plus 2 BM25 hard negatives per pair; `MultipleNegativesRankingLoss`, batch 32, learning rate 2e-5, 10% warmup, seed 42, on a free Colab T4. 81 train claims (10%) were held out as a dev set to choose the epoch; the test claims were never used for training or model selection. The notebook also drops two train claims that are word-for-word copies of test claims in the official split (871 = 870, 1291 = 1292), which would otherwise leak test answers.
+
+Dev set, nDCG@10: base 0.694 → epoch 1 0.708 → epoch 2 0.739 → **epoch 3 0.751** (kept).
+
+**SciFact test set (300 claims):**
+
+| Retrieval setup | nDCG@10 base | nDCG@10 fine-tuned | Δ nDCG@10 [95% CI] | p50 latency |
+|---|---|---|---|---|
+| Dense only | 0.665 | **0.721** | **+0.055** [+0.035, +0.077] | 15 ms |
+| Hybrid (BM25 + dense, RRF) | 0.671 | 0.719 | +0.048 [+0.030, +0.068] | 74 ms |
+| Two-stage (hybrid + cross-encoder) | 0.710 | 0.719 | +0.009 [+0.002, +0.019] | 734 ms |
+
+(Paired bootstrap over the same queries; MRR@10 moves the same way: +0.057, +0.057 and +0.007.)
+
+- **Fine-tuning works in-domain:** dense nDCG@10 rises by 0.055, and the confidence interval is well above zero.
+- **Fine-tuned dense search alone matches the base two-stage pipeline** (0.721 vs 0.710; paired Δ +0.011 [−0.015, +0.040], so not significantly different) at about **50× lower latency** (15 ms vs 826 ms). For a single-domain deployment, fine-tuning the embedder could replace the reranker.
+- **The reranker stops adding value once dense search is fine-tuned** (two-stage 0.719 vs dense 0.721). The cross-encoder was trained on general web search (MS MARCO) and becomes the weaker ranker here; fine-tuning it on SciFact too would be the next step.
+
+**Lecture PDFs (the 27 questions), base vs fine-tuned embeddings:**
+
+| Retrieval setup | HitRate@3 | HitRate@10 | MRR@10 | NDCG@10 |
+|---|---|---|---|---|
+| Dense only | 0.778 → 0.852 | 0.963 → 0.926 | 0.677 → 0.691 | 0.448 → 0.452 |
+| Hybrid | 0.889 → 0.889 | 0.963 → 0.926 | 0.847 → 0.843 | 0.498 → 0.485 |
+| **Two-stage (the app)** | 0.963 → 0.963 | 0.963 → 0.963 | 0.907 → 0.907 | 0.554 → 0.558 |
+
+**The gain does not carry over.** The changes are mixed and small: dense search ranks 2 more questions in the top 3 but loses 1 from the top 10, and the app's two-stage pipeline is unchanged. With 27 questions, a difference of 1–2 questions is within noise. SciFact's biomedical claims are a different domain from AI and statistics lecture notes, so the app keeps the base model.
+
+**Limitations.** One training run with one seed. The best epoch was the last one tried (dev score still rising), so more epochs, chosen on dev, might help further. The dev evaluation embeds the first 256 tokens of each abstract while the benchmark uses chunks, so dev and test numbers are not directly comparable.
+
+Reproduce: run the notebook on Colab ([`finetune/README.md`](finetune/README.md)), unzip the model into `finetune/models/`, then:
+
+```bash
+python benchmarks/benchmark_scifact.py --model finetune/models/minilm-scifact --label fine-tuned
+python benchmarks/benchmark_retrieval.py --model finetune/models/minilm-scifact --label fine-tuned
+```
+
+Full tables: [`benchmarks/scifact_results.md`](benchmarks/scifact_results.md) and [`benchmarks/benchmark_results_fine-tuned.md`](benchmarks/benchmark_results_fine-tuned.md).
+
 ## Engineering highlights
 
 - **Two-stage retrieval:** BM25 and dense search (top 30 each) are fused with RRF (k = 60, top 25), then a cross-encoder (`ms-marco-MiniLM-L-6-v2`) picks the 10 chunks sent to the LLM.
@@ -164,8 +207,9 @@ The original project specification is in [`SPEC.md`](SPEC.md).
 ├── benchmarks/
 │   ├── benchmark_retrieval.py     # Dense vs BM25 vs hybrid vs two-stage ablation
 │   ├── benchmark_results.md       # Latest benchmark tables
+│   ├── benchmark_results_fine-tuned.md  # Same, with the fine-tuned embedding model
 │   ├── benchmark_scifact.py       # The same four setups on BEIR SciFact, with bootstrap CIs
-│   └── scifact_results.md         # SciFact tables
+│   └── scifact_results.md         # SciFact tables (base and fine-tuned)
 ├── finetune/
 │   ├── finetune_minilm_scifact.ipynb  # Colab notebook: fine-tune MiniLM on SciFact train
 │   └── README.md                  # How to run it and use the model locally

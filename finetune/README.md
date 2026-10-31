@@ -20,6 +20,11 @@ What the notebook does:
 
 The test split is never used in the notebook.
 
+**Result** (Colab T4, seed 42; details in the main [README](../README.md#fine-tuning)): dev nDCG@10
+0.694 → 0.751 after 3 epochs. On the SciFact test set, dense nDCG@10 rose from 0.665 to 0.721
+(+0.055, 95% CI [+0.035, +0.077]). On the 27 lecture-PDF questions the change was mixed and within
+noise, so the app keeps the base model.
+
 ## Run it on Colab
 
 1. Open the notebook in Colab: **File → Upload notebook**, or
