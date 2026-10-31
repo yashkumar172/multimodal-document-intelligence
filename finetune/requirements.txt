@@ -1,0 +1,5 @@
+# Extra packages for running finetune_minilm_scifact.ipynb outside Colab, installed on
+# top of the project's requirements.txt (SentenceTransformerTrainer needs both).
+# On Colab, the notebook's first cell installs everything it needs.
+datasets
+accelerate

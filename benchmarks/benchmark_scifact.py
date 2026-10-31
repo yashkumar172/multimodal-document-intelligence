@@ -193,12 +193,14 @@ def make_configs(index, label=""):
         return to_documents(reranker.rerank(q, candidates, top_n=len(candidates)))
 
     suffix = f" ({label})" if label else ""
-    return [
+    configs = [
         (f"Dense-only{suffix}", dense_only),
         ("Sparse-only (BM25)", sparse_only),
         (f"Hybrid (BM25 + Dense, RRF){suffix}", hybrid),
         (f"Two-Stage (Hybrid + Reranker){suffix}", two_stage),
     ]
+    # BM25 does not depend on the embedding model, so it is only run for the base model.
+    return [c for c in configs if not (label and c[0].startswith("Sparse"))]
 
 
 # ---------------------------------------------------------------- metrics
@@ -250,6 +252,40 @@ def check_finite(results):
 
 
 # ---------------------------------------------------------------- report
+
+def per_query_path(label):
+    return os.path.join(CACHE_DIR, f"per_query_{label or 'base'}.json")
+
+
+def save_per_query(results, qids, label):
+    data = {name: {"qids": qids, "ndcg": r["ndcg"], "mrr": r["mrr"]} for name, r in results.items()}
+    with open(per_query_path(label), "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+
+def compare_with_base(results, qids, label):
+    """Paired bootstrap of each labelled row against the same row for the base model."""
+    if not os.path.exists(per_query_path("")):
+        return "\n(Run without --label first to compare against the base model.)"
+    with open(per_query_path(""), encoding="utf-8") as f:
+        base = json.load(f)
+    lines = [
+        "\n### Difference vs the base model (paired bootstrap, 95% CI)\n",
+        "| Configuration | Δ nDCG@10 [95% CI] | Δ MRR@10 [95% CI] |",
+        "|---|---|---|",
+    ]
+    for name, r in results.items():
+        base_name = name.replace(f" ({label})", "")
+        if base_name not in base or base[base_name]["qids"] != qids:
+            continue
+        cells = []
+        for metric in ("ndcg", "mrr"):
+            diff = np.array(r[metric]) - np.array(base[base_name][metric])
+            lo, hi = bootstrap_ci(diff)
+            cells.append(f"{diff.mean():+.3f} [{lo:+.3f}, {hi:+.3f}]")
+        lines.append(f"| {name} vs {base_name} | {cells[0]} | {cells[1]} |")
+    return "\n".join(lines)
+
 
 def build_tables(results, n_queries, n_docs, n_chunks, model_name):
     lines = [
@@ -310,17 +346,33 @@ def main():
     results = evaluate(make_configs(index, args.label), queries, qrels)
     check_finite(results)
     tables = build_tables(results, len(queries), len(corpus), len(chunks), args.model)
+    qids = list(queries)
+    if args.label:
+        tables += "\n" + compare_with_base(results, qids, args.label)
     print("\n" + tables)
 
     if args.limit:
         print("\n--limit set: results not written.")
         return
-    section = f"## {args.label or 'Base model'}\n\n{tables}\n"
-    with open(RESULTS_PATH, "w" if not args.label else "a", encoding="utf-8") as f:
-        if not args.label:
-            f.write("# Retrieval Benchmark: BEIR SciFact\n\n")
-        f.write(("\n" if args.label else "") + section)
+    save_per_query(results, qids, args.label)
+    write_section(args.label or "Base model", tables)
     print(f"\nWritten to {RESULTS_PATH}")
+
+
+def write_section(heading, tables):
+    """Add or replace one '## heading' section of the results file; the base model comes first."""
+    sections = {}
+    if os.path.exists(RESULTS_PATH):
+        with open(RESULTS_PATH, encoding="utf-8") as f:
+            for part in f.read().split("\n## ")[1:]:
+                title, _, body = part.partition("\n")
+                sections[title.strip()] = body.strip()
+    sections[heading] = tables.strip()
+    order = sorted(sections, key=lambda t: t != "Base model")
+    with open(RESULTS_PATH, "w", encoding="utf-8") as f:
+        f.write("# Retrieval Benchmark: BEIR SciFact\n")
+        for title in order:
+            f.write(f"\n## {title}\n\n{sections[title]}\n")
 
 
 if __name__ == "__main__":
