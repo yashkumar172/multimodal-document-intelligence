@@ -2,6 +2,8 @@
 
 Ask questions about your PDFs and get answers grounded in the documents, with **page-level citations**. Retrieval is **two-stage hybrid search** (BM25 + dense embeddings fused with Reciprocal Rank Fusion, then a cross-encoder reranker), figures and tables are read by a **vision-language model**, and two documents can be **compared** side by side. Retrieval runs locally on CPU, and only answer generation and figure descriptions call the Gemini API.
 
+**Live demo:** [multimodal-document-intelligence.streamlit.app](https://multimodal-document-intelligence-szgugehyamdfzdxzqjvhq6.streamlit.app/)
+
 **Stack:** Python · Streamlit · Sentence Transformers · ChromaDB · rank-bm25 · Google Gemini
 
 ---
