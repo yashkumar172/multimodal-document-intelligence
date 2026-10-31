@@ -9,7 +9,12 @@ Retrieval ablation over the eval questions (no Gemini calls):
 Reports HitRate@K, MRR@K and NDCG@K for K in {3, 5, 10}, plus p50/p95 retrieval
 latency, and writes the tables to benchmarks/benchmark_results.md.
 
+With --model, the app's chunks are re-embedded with that model into an
+in-memory ChromaDB copy (the app's chroma_db/ is only read), and the results go
+to benchmarks/benchmark_results_<label>.md.
+
 Usage: python benchmarks/benchmark_retrieval.py [--repeats N] [--fused N]
+                                                [--model PATH_OR_NAME --label NAME]
 """
 
 import argparse
@@ -29,6 +34,25 @@ from src import embeddings, pipeline, vector_store
 
 KS = (3, 5, 10)
 RESULTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "benchmark_results.md")
+
+
+def use_embedding_model(model_name):
+    """
+    Benchmark-only override: query with model_name and search an in-memory copy
+    of the app's chunks embedded with it. BM25, RRF and the reranker see the
+    same chunk texts, so only the dense vectors change.
+    """
+    import chromadb
+    from sentence_transformers import SentenceTransformer
+
+    data = vector_store.get_collection().get()
+    embeddings._model = SentenceTransformer(model_name, device="cpu")
+    vectors = embeddings.embed_texts(data["documents"])
+    copy = chromadb.EphemeralClient().get_or_create_collection("benchmark_copy")
+    copy.add(ids=data["ids"], embeddings=vectors, documents=data["documents"], metadatas=data["metadatas"])
+    vector_store.get_collection = lambda: copy
+    vector_store._invalidate_bm25()
+    print(f"Re-embedded {len(data['ids'])} chunks with {model_name}")
 
 
 def dense_only(question):
@@ -153,6 +177,8 @@ def main():
     parser.add_argument("--repeats", type=int, default=3, help="timed runs per question")
     parser.add_argument("--fused", type=int, default=pipeline.FUSED_CANDIDATES,
                         help="candidates kept after RRF (and reranked in Two-Stage)")
+    parser.add_argument("--model", help="embedding model name or local path (e.g. a fine-tuned model)")
+    parser.add_argument("--label", default="custom", help="name for the --model results file")
     args = parser.parse_args()
     pipeline.FUSED_CANDIDATES = args.fused
 
@@ -165,13 +191,19 @@ def main():
     if not items:
         sys.exit("None of the eval questions' documents are indexed.")
 
+    results_path, title = RESULTS_PATH, "# Retrieval Benchmark"
+    if args.model:
+        use_embedding_model(args.model)
+        results_path = RESULTS_PATH.replace(".md", f"_{args.label.replace(' ', '-')}.md")
+        title += f" ({args.label} embeddings: `{args.model}`)"
+
     results = run(items, args.repeats)
     check_finite(results)
     tables = build_tables(results, items, args.repeats)
     print("\n" + tables)
-    with open(RESULTS_PATH, "w", encoding="utf-8") as f:
-        f.write("# Retrieval Benchmark\n\n" + tables + "\n")
-    print(f"\nWritten to {RESULTS_PATH}")
+    with open(results_path, "w", encoding="utf-8") as f:
+        f.write(f"{title}\n\n" + tables + "\n")
+    print(f"\nWritten to {results_path}")
 
 
 if __name__ == "__main__":

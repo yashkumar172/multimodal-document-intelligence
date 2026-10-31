@@ -20,11 +20,81 @@ Retrieval ablation on 27 labelled questions (15 generated from the source text, 
 | **Two-stage (hybrid + cross-encoder)** | **0.963** | **0.963** | **0.907** | **0.554** | 828 ms | 909 ms |
 
 - **Ranking, not just recall:** every setup finds the right page in the top 10 about equally often. Two-stage retrieval puts it in the **top 3 for 26 of 27 questions**, against 21 for dense search alone, and raises **MRR@10 from 0.677 to 0.907**.
-- **Hybrid beats either search alone:** BM25 catches exact codes and names that embeddings blur; dense search catches paraphrases that keywords miss.
+- **Hybrid helps here, but not everywhere:** on these lecture PDFs, fusing BM25 with dense search raised MRR@10 from 0.677 (dense) and 0.781 (BM25) to 0.847, because the two fail on different questions. On the public SciFact benchmark (below) hybrid was no better than dense alone; only the reranker gave a significant gain.
 - **Trade-off, measured:** the reranker costs about 0.8 s per question on a laptop CPU (Ryzen 5 5500U), against about 20 ms for hybrid search alone.
 - **End to end with Gemini:** Recall@10 is **96%** and MRR@10 **0.91**; on the paraphrased questions alone, 92% and 0.88.
 
 Reproduce with `python benchmarks/benchmark_retrieval.py` (no API calls) and `python eval/run_evaluation.py`. Full tables are in [`benchmarks/benchmark_results.md`](benchmarks/benchmark_results.md), and per-question answers in [`eval/eval_report.md`](eval/eval_report.md).
+
+## Benchmark on BEIR SciFact
+
+27 questions on my own PDFs is a small test, so the same four retrieval setups were also run on [BEIR SciFact](https://github.com/beir-cellar/beir), a public benchmark: 300 scientific claims (test split) to be matched against 5,183 paper abstracts. nDCG@10 is the standard BEIR metric.
+
+| Retrieval setup | nDCG@10 [95% CI] | Recall@10 | MRR@10 [95% CI] | p50 latency | p95 latency |
+|---|---|---|---|---|---|
+| Dense only (MiniLM) | 0.665 [0.620, 0.712] | 0.814 | 0.623 [0.576, 0.674] | 18 ms | 22 ms |
+| Sparse only (BM25) | 0.599 [0.554, 0.645] | 0.736 | 0.559 [0.512, 0.607] | 57 ms | 107 ms |
+| Hybrid (BM25 + dense, RRF) | 0.671 [0.628, 0.716] | 0.816 | 0.632 [0.587, 0.678] | 74 ms | 127 ms |
+| **Two-stage (hybrid + cross-encoder)** | **0.710** [0.670, 0.752] | **0.844** | **0.677** [0.633, 0.723] | 826 ms | 957 ms |
+
+Paired bootstrap differences in nDCG@10 against dense only (same resampled queries for both): BM25 **−0.066** [−0.108, −0.027], hybrid **+0.006** [−0.022, +0.031], two-stage **+0.044** [+0.012, +0.074].
+
+- **The reranker is the one component that helps significantly** (+0.044 nDCG@10, CI above zero), which supports the main design choice on data I didn't pick.
+- **Hybrid search did not help on SciFact,** unlike on the lecture PDFs. BM25 is clearly weaker than dense search here: the claims paraphrase the abstracts, and the project's BM25 tokenizer has no stemming or stop-word removal, so "inhibits" doesn't match "inhibition". RRF weights both lists equally, so a weak BM25 list adds about as much noise as it adds new relevant documents. Weighting the fusion or adding stemming might help, but would have to be tuned on the train split, not on this test set.
+- **Sanity check:** dense-only MiniLM scores 0.665, close to the ~0.645 reported for this model on the MTEB leaderboard (slightly higher here, likely because chunking keeps the ends of long abstracts that MiniLM would otherwise truncate). BM25 is below BEIR's official Elasticsearch baseline (~0.665), which uses stemming.
+
+**Setup.** Exactly the app's retrieval code: the same chunker (200 tokens, 40 overlap), BM25 tokenizer, RRF (k = 60, 30 candidates per search, keep 25) and cross-encoder. 87% of abstracts are longer than 200 tokens, so documents are chunked like PDFs (12,198 chunks), and each document is ranked by its best chunk. The reranker scores the same 25 fused chunks as in the app, and the reranked chunks are collapsed to the top 10 documents. 95% confidence intervals come from 1,000 bootstrap resamples over queries (seed 42). Latency is retrieval only, on a laptop CPU.
+
+```bash
+python benchmarks/benchmark_scifact.py   # downloads SciFact (~3 MB) on first run; ~5 min to embed, ~6 min to run
+```
+
+The dataset and its index are cached in `benchmarks/beir_cache/` (gitignored), separate from the app's `chroma_db/`. Full tables: [`benchmarks/scifact_results.md`](benchmarks/scifact_results.md).
+
+**Limitations.** SciFact is one domain (biomedical claims) with about 1.1 relevant documents per query, so it says little about other document types. The ~0.645 MTEB figure is quoted for context only; it uses whole-document embeddings, not chunks, so it isn't an exact comparison.
+
+## Fine-tuning
+
+`all-MiniLM-L6-v2` was fine-tuned on SciFact's **train** split to see whether a domain-adapted embedding model beats the general one, and whether that gain carries over to the lecture PDFs.
+
+**Setup** ([`finetune/`](finetune/)): 726 train claims with their relevant abstracts (826 pairs), plus 2 BM25 hard negatives per pair; `MultipleNegativesRankingLoss`, batch 32, learning rate 2e-5, 10% warmup, seed 42, on a free Colab T4. 81 train claims (10%) were held out as a dev set to choose the epoch; the test claims were never used for training or model selection. The notebook also drops two train claims that are word-for-word copies of test claims in the official split (871 = 870, 1291 = 1292), which would otherwise leak test answers.
+
+Dev set, nDCG@10: base 0.694 → epoch 1 0.708 → epoch 2 0.739 → **epoch 3 0.751** (kept).
+
+**SciFact test set (300 claims):**
+
+| Retrieval setup | nDCG@10 base | nDCG@10 fine-tuned | Δ nDCG@10 [95% CI] | p50 latency |
+|---|---|---|---|---|
+| Dense only | 0.665 | **0.721** | **+0.055** [+0.035, +0.077] | 15 ms |
+| Hybrid (BM25 + dense, RRF) | 0.671 | 0.719 | +0.048 [+0.030, +0.068] | 74 ms |
+| Two-stage (hybrid + cross-encoder) | 0.710 | 0.719 | +0.009 [+0.002, +0.019] | 734 ms |
+
+(Paired bootstrap over the same queries; MRR@10 moves the same way: +0.057, +0.057 and +0.007.)
+
+- **Fine-tuning works in-domain:** dense nDCG@10 rises by 0.055, and the confidence interval is well above zero.
+- **Fine-tuned dense search alone matches the base two-stage pipeline** (0.721 vs 0.710; paired Δ +0.011 [−0.015, +0.040], so not significantly different) at about **50× lower latency** (15 ms vs 826 ms). For a single-domain deployment, fine-tuning the embedder could replace the reranker.
+- **The reranker stops adding value once dense search is fine-tuned** (two-stage 0.719 vs dense 0.721). The cross-encoder was trained on general web search (MS MARCO) and becomes the weaker ranker here; fine-tuning it on SciFact too would be the next step.
+
+**Lecture PDFs (the 27 questions), base vs fine-tuned embeddings:**
+
+| Retrieval setup | HitRate@3 | HitRate@10 | MRR@10 | NDCG@10 |
+|---|---|---|---|---|
+| Dense only | 0.778 → 0.852 | 0.963 → 0.926 | 0.677 → 0.691 | 0.448 → 0.452 |
+| Hybrid | 0.889 → 0.889 | 0.963 → 0.926 | 0.847 → 0.843 | 0.498 → 0.485 |
+| **Two-stage (the app)** | 0.963 → 0.963 | 0.963 → 0.963 | 0.907 → 0.907 | 0.554 → 0.558 |
+
+**The gain does not carry over.** The changes are mixed and small: dense search ranks 2 more questions in the top 3 but loses 1 from the top 10, and the app's two-stage pipeline is unchanged. With 27 questions, a difference of 1–2 questions is within noise. SciFact's biomedical claims are a different domain from AI and statistics lecture notes, so the app keeps the base model.
+
+**Limitations.** One training run with one seed. The best epoch was the last one tried (dev score still rising), so more epochs, chosen on dev, might help further. The dev evaluation embeds the first 256 tokens of each abstract while the benchmark uses chunks, so dev and test numbers are not directly comparable.
+
+Reproduce: run the notebook on Colab ([`finetune/README.md`](finetune/README.md)), unzip the model into `finetune/models/`, then:
+
+```bash
+python benchmarks/benchmark_scifact.py --model finetune/models/minilm-scifact --label fine-tuned
+python benchmarks/benchmark_retrieval.py --model finetune/models/minilm-scifact --label fine-tuned
+```
+
+Full tables: [`benchmarks/scifact_results.md`](benchmarks/scifact_results.md) and [`benchmarks/benchmark_results_fine-tuned.md`](benchmarks/benchmark_results_fine-tuned.md).
 
 ## Engineering highlights
 
@@ -48,7 +118,7 @@ For the full technical walkthrough (every pipeline step, design trade-offs, limi
 - **Multi-turn chat**: follow-up questions use the conversation history.
 - **Document comparison**: compare two documents' methods or findings, with evidence drawn from each document separately.
 - **Latency breakdown**: each answer shows how long every retrieval stage and the LLM call took.
-- **Evaluation and benchmarking**: an evaluation over generated and hand-paraphrased questions, and a retrieval benchmark comparing dense, BM25, hybrid and two-stage retrieval (HitRate@K, MRR@K, NDCG@K, p50/p95 latency).
+- **Evaluation and benchmarking**: an evaluation over generated and hand-paraphrased questions, and a retrieval benchmark comparing dense, BM25, hybrid and two-stage retrieval (HitRate@K, MRR@K, NDCG@K, p50/p95 latency), on the lecture PDFs and on the public BEIR SciFact dataset with bootstrap confidence intervals.
 
 ---
 
@@ -136,7 +206,13 @@ The original project specification is in [`SPEC.md`](SPEC.md).
 │   └── eval_report.md      # Latest results
 ├── benchmarks/
 │   ├── benchmark_retrieval.py     # Dense vs BM25 vs hybrid vs two-stage ablation
-│   └── benchmark_results.md       # Latest benchmark tables
+│   ├── benchmark_results.md       # Latest benchmark tables
+│   ├── benchmark_results_fine-tuned.md  # Same, with the fine-tuned embedding model
+│   ├── benchmark_scifact.py       # The same four setups on BEIR SciFact, with bootstrap CIs
+│   └── scifact_results.md         # SciFact tables (base and fine-tuned)
+├── finetune/
+│   ├── finetune_minilm_scifact.ipynb  # Colab notebook: fine-tune MiniLM on SciFact train
+│   └── README.md                  # How to run it and use the model locally
 ├── tests/                  # Manual test scripts for each component
 ├── PROJECT_PIPELINE_EXPLAINED.md  # Technical deep dive
 ├── requirements.txt
