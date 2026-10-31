@@ -25,3 +25,6 @@ transcript.html
 .idea/
 .DS_Store
 Thumbs.db
+
+# BEIR datasets and benchmark indexes (downloaded/rebuilt by benchmarks/benchmark_scifact.py)
+benchmarks/beir_cache/
