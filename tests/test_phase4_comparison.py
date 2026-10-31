@@ -41,7 +41,7 @@ def main():
     pipeline.ingest_pdf(paper_b, "Paper_B.pdf")
 
     print("Comparing methodologies via the full pipeline...")
-    answer, sources = pipeline.compare_documents(
+    answer, sources, _timings = pipeline.compare_documents(
         "Paper_A.pdf", "Paper_B.pdf", question="Compare the methodologies used in both papers."
     )
     print("\n--- Comparison Answer ---")

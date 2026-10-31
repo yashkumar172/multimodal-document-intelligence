@@ -64,7 +64,7 @@ def describe_image(image_bytes, page_number=None):
 
 def generate_answer(question, context_chunks, history=None):
     """
-    context_chunks: list of {"content", "metadata"} from vector_store.query
+    context_chunks: list of {"content", "metadata"}: the reranked chunks from pipeline.retrieve
     history: list of (role, text) tuples for prior turns, optional
     """
     context_text = "\n\n".join(

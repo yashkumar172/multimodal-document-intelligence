@@ -1,0 +1,74 @@
+[
+  {
+    "question": "How long did it take OpenAI's free chat interface, launched in late 2022, to reach a hundred million people?",
+    "expected_answer": "Within two months of its November 2022 launch, the fastest adoption of any consumer application to that point.",
+    "expected_page": 8,
+    "document_name": "Chapter01_Introduction_to_AI (2).pdf"
+  },
+  {
+    "question": "In the Bengaluru taxi-app story, how long were passengers in HSR Layout waiting for a car before and after the change?",
+    "expected_answer": "The average rider wait time rose from 2.8 to 4.2 minutes week-over-week.",
+    "expected_page": 13,
+    "document_name": "Chapter01_Introduction_to_AI (2).pdf"
+  },
+  {
+    "question": "How many temperature measurements were used to learn the conversion between the two temperature scales?",
+    "expected_answer": "Six paired Celsius/Fahrenheit readings.",
+    "expected_page": 16,
+    "document_name": "Chapter01_Introduction_to_AI (2).pdf"
+  },
+  {
+    "question": "What do we call the number of different labels a non-numeric variable is able to take?",
+    "expected_answer": "Its cardinality (e.g. a yes/no variable has cardinality 2).",
+    "expected_page": 18,
+    "document_name": "Chapter01_Introduction_to_AI (2).pdf"
+  },
+  {
+    "question": "Roughly how big is the list of words a typical large language model chooses from each time it writes the next piece of text?",
+    "expected_answer": "A fixed vocabulary of about 50,000 tokens.",
+    "expected_page": 20,
+    "document_name": "Chapter01_Introduction_to_AI (2).pdf"
+  },
+  {
+    "question": "When the six-word toy model always picks its most likely next word, what does it end up writing, and how many times does it have to run?",
+    "expected_answer": "\"The cat sat on mat\", using four forward passes.",
+    "expected_page": 22,
+    "document_name": "Chapter01_Introduction_to_AI (2).pdf"
+  },
+  {
+    "question": "Which methods are suggested for catching suspicious card payments when almost no confirmed cheating cases are labelled?",
+    "expected_answer": "Unsupervised anomaly detection with a Gaussian Mixture Model, Isolation Forest, or PCA-based reconstruction error.",
+    "expected_page": 24,
+    "document_name": "Chapter01_Introduction_to_AI (2).pdf"
+  },
+  {
+    "question": "What share of shoppers say they would rather text a business than phone it?",
+    "expected_answer": "Roughly 64% of consumers prefer messaging over calling.",
+    "expected_page": 26,
+    "document_name": "Chapter01_Introduction_to_AI (2).pdf"
+  },
+  {
+    "question": "In the help-desk walkthrough, who handles a customer complaining that they were billed twice for recent purchases?",
+    "expected_answer": "It is tagged a complex query and routed to response generation with an AI-assisted human agent, not answered by the AI alone.",
+    "expected_page": 28,
+    "document_name": "Chapter01_Introduction_to_AI (2).pdf"
+  },
+  {
+    "question": "Of all the payments the fraud checker raised an alarm on, what fraction turned out to be genuinely fraudulent?",
+    "expected_answer": "About 33.3% (15 of the 45 flagged transactions).",
+    "expected_page": 31,
+    "document_name": "Chapter01_Introduction_to_AI (2).pdf"
+  },
+  {
+    "question": "Give the chapter's example of a machine that counts as artificial intelligence but has nothing to do with data science.",
+    "expected_answer": "An autonomous line-following robot on a factory floor.",
+    "expected_page": 10,
+    "document_name": "Chapter01_Introduction_to_AI (2).pdf"
+  },
+  {
+    "question": "How many hundreds did the batter in the one-day cricket example score over their career?",
+    "expected_answer": "43 centuries (251 matches, 12,040 runs, average 59.31).",
+    "expected_page": 12,
+    "document_name": "Chapter01_Introduction_to_AI (2).pdf"
+  }
+]

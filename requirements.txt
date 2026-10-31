@@ -5,6 +5,7 @@ sentence-transformers
 chromadb==1.5.9
 google-genai
 transformers
+rank-bm25
 python-dotenv
 
 # Used by the scripts in tests/ to build test PDFs and images

@@ -74,7 +74,7 @@ def main():
     print("  OK")
 
     print("Asking a question about the chart via the full pipeline...")
-    answer, sources = pipeline.answer_question("What does the chart in Figure 1 show?")
+    answer, sources, _timings = pipeline.answer_question("What does the chart in Figure 1 show?")
     print("Answer:", answer)
     print("Sources:", sources)
     assert any(s["type"] == "visual" for s in sources), "Expected a visual source to be cited"
