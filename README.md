@@ -6,6 +6,8 @@ Ask questions about your PDFs and get answers grounded in the documents, with **
 
 **Stack:** Python · Streamlit · Sentence Transformers · ChromaDB · rank-bm25 · Google Gemini
 
+![Answer with a page citation, its sources and the per-stage latency breakdown](screenshots/rag-demo.png)
+
 ---
 
 ## Results
