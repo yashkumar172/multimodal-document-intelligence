@@ -31,3 +31,6 @@ benchmarks/beir_cache/
 
 # Fine-tuned models unzipped from the Colab notebook
 finetune/models/
+
+# Personal interview-prep notes (kept locally, not published)
+PROJECT_PIPELINE_EXPLAINED.md
