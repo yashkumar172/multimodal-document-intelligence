@@ -624,14 +624,14 @@ Stored in `eval/eval_set.json`; per-question results in `eval/eval_report.md`. A
 | 2 | What discipline is described as an umbrella term for extracting knowledge and value from data? | Data Science | 9 | ✅ |
 | 3 | Who will have the customer's coffee ready? | Barista Priya | 26 | ✅ |
 | 4 | What is the accuracy percentage of the system described in the text? | 96.5% | 31 | ✅ |
-| 5 | Why are vendors motivated to apply the "AI-powered" label to products? | It reliably increases sales ("AI hype") | 8 | ✅ |
+| 5 | Why are vendors motivated to apply the 'AI-powered' label to products? | It reliably increases sales ("AI hype") | 8 | ✅ |
 | 6 | What question does diagnostic analytics answer? | "Why did it happen?" | 11 | ✅ |
 | 7 | What are the two mechanisms by which an AI system's behaviour can come to exist? | Machine learning and rule-based AI | 5 | ✅ |
 | 8 | According to Figure 1.5, what goes into classical programming to have the program compute answers? | Rules and data | 15 | ✅ |
 | 9 | What is the title of section 1.3 in the provided text? | Data Science: An Umbrella Discipline | 9 | ✅ |
 | 10 | How is intelligence commonly defined in the text? | The ability to acquire and apply knowledge | 4 | ✅ |
-| 11 | Is machine learning a subset of AI, or is AI a subset of ML? | ML is a subset of AI | 33 | ✅ |
-| 12 | Which adaptation mechanism continues training some or all of a model's parameters on a smaller, task-specific dataset? | Fine-tuning | 25 | ✅ |
+| 11 | According to the text, is machine learning (ML) a subset of AI or is AI a subset of ML? | ML is a subset of AI | 33 | ✅ |
+| 12 | According to the text, which adaptation mechanism involves continuing to train some or all of the model's parameters on a smaller, task-specific dataset? | Fine-tuning | 25 | ✅ |
 | 13 | What is Artificial Narrow Intelligence (ANI)? | AI that performs a specific task or bounded range of tasks, without transferring to novel task types | 5 | ✅ |
 | 14 | How is time-series data defined in the provided text? | Tabular data with an added ordering in time (e.g. daily sales) | 17 | ✅ |
 | 15 | What is the upfront requirement-gathering step called in specification-driven development (SDD)? | The specification stage | 29 | ✅ |
